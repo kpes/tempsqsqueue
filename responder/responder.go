@@ -2,11 +2,11 @@ package responder
 
 import (
 	"context"
-	"tempqueue/common"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/kpes/tempsqsqueue/internal/common"
 )
 
 type ProcessFunc func(message string) (string, error)
@@ -24,8 +24,15 @@ func NewResponder(sqsClient *sqs.Client, processFunc ProcessFunc) Responder {
 }
 
 func (r *Responder) ProcessAndReply(ctx context.Context, message types.Message) error {
-	responseUrl := message.MessageAttributes[common.ResponseQueueUrl]
-	correlationId := message.MessageAttributes[common.CorrelationMessageAttributeKey]
+	responseUrl, ok := message.MessageAttributes[common.ResponseQueueUrl]
+	if !ok || len(*responseUrl.StringValue) == 0 {
+		return &RequiredAttributeMissing{field: common.ResponseQueueUrl}
+	}
+
+	correlationId, ok := message.MessageAttributes[common.CorrelationMessageAttributeKey]
+	if !ok || len(*correlationId.StringValue) == 0 {
+		return &RequiredAttributeMissing{field: common.CorrelationMessageAttributeKey}
+	}
 
 	result, err := r.processFunc(*message.Body)
 	if err != nil {

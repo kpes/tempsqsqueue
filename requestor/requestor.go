@@ -3,12 +3,12 @@ package requestor
 import (
 	"context"
 	"encoding/json"
-	"tempqueue/common"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/google/uuid"
+	"github.com/kpes/tempsqsqueue/internal/common"
 )
 
 type Requestor struct {

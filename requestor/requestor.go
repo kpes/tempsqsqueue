@@ -3,6 +3,7 @@ package requestor
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -12,9 +13,14 @@ import (
 )
 
 type Requestor struct {
-	client           *sqs.Client
+	client           sqsClient
 	responseQueueUrl string
 	waitTime         int32
+}
+
+type sqsClient interface {
+	SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error)
+	ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
 }
 
 type RequestorOption func(*Requestor)
@@ -25,9 +31,9 @@ func WithWaitTime(waitTime int32) RequestorOption {
 	}
 }
 
-func NewRequestor(sqsClient *sqs.Client, responseQueueUrl string, opts ...RequestorOption) *Requestor {
+func NewRequestor(client sqsClient, responseQueueUrl string, opts ...RequestorOption) *Requestor {
 	r := &Requestor{
-		client:           sqsClient,
+		client:           client,
 		responseQueueUrl: responseQueueUrl,
 		waitTime:         10,
 	}
@@ -39,12 +45,12 @@ func NewRequestor(sqsClient *sqs.Client, responseQueueUrl string, opts ...Reques
 	return r
 }
 
-func (t *Requestor) SendMessageAndWaitForResponse(ctx context.Context, sendToQueueUrl string, message any) (string, error) {
+func (r *Requestor) SendMessageAndWaitForResponse(ctx context.Context, sendToQueueUrl string, message any, response any) error {
 	correlationId := uuid.NewString()
 
 	body, err := json.Marshal(message)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	inputMessage := sqs.SendMessageInput{
@@ -55,31 +61,39 @@ func (t *Requestor) SendMessageAndWaitForResponse(ctx context.Context, sendToQue
 				StringValue: aws.String(correlationId),
 			},
 			common.ResponseQueueUrl: {
-				StringValue: aws.String(t.responseQueueUrl),
+				StringValue: aws.String(r.responseQueueUrl),
 			},
 		},
 	}
 
-	_, err = t.client.SendMessage(ctx, &inputMessage)
+	_, err = r.client.SendMessage(ctx, &inputMessage)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	result, err := t.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-		QueueUrl:        aws.String(t.responseQueueUrl),
-		WaitTimeSeconds: t.waitTime,
-	})
-	if err != nil {
-		return "", err
-	}
+	received := false
+	endTime := time.Now().Add(time.Second * time.Duration(r.waitTime))
+	for !received && time.Now().Before(endTime) {
+		result, err := r.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl:        aws.String(r.responseQueueUrl),
+			WaitTimeSeconds: 5,
+		})
+		if err != nil {
+			return err
+		}
 
-	for _, message := range result.Messages {
-		if val, ok := message.MessageAttributes[common.CorrelationMessageAttributeKey]; ok {
-			if *val.StringValue == correlationId {
-				return *message.Body, nil
+		for _, message := range result.Messages {
+			if val, ok := message.MessageAttributes[common.CorrelationMessageAttributeKey]; ok {
+				if *val.StringValue == correlationId {
+					if err = json.Unmarshal([]byte(*message.Body), &response); err != nil {
+						return err
+					}
+
+					return nil
+				}
 			}
 		}
 	}
 
-	return "", nil
+	return nil
 }

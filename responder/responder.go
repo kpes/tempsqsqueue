@@ -12,11 +12,15 @@ import (
 type ProcessFunc func(message string) (string, error)
 
 type Responder struct {
-	client      *sqs.Client
+	client      sqsClient
 	processFunc ProcessFunc
 }
 
-func NewResponder(sqsClient *sqs.Client, processFunc ProcessFunc) Responder {
+type sqsClient interface {
+	SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error)
+}
+
+func NewResponder(sqsClient sqsClient, processFunc ProcessFunc) Responder {
 	return Responder{
 		client:      sqsClient,
 		processFunc: processFunc,
